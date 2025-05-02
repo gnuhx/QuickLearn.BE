@@ -1,0 +1,6 @@
+@QuickLearn.BE_HostAddress = http://localhost:5206
+
+GET {{QuickLearn.BE_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

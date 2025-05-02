@@ -1,0 +1,7 @@
+﻿################################################################################
+# This .gitignore file was automatically created by Microsoft(R) Visual Studio.
+################################################################################
+
+/QuickLearn.BE/obj
+/QuickLearn.BE/bin/Debug/net9.0
+/QuickLearn.BE/.vs/QuickLearn.BE

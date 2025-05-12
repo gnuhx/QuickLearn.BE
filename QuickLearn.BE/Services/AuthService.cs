@@ -1,6 +1,7 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
+using Google.Apis.Auth;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using QuickLearn.BE.Data;
@@ -12,6 +13,7 @@ public interface IAuthService
 {
     Task<AuthResponse> LoginAsync(LoginRequest request);
     Task<AuthResponse> RegisterAsync(RegisterRequest request);
+    Task<AuthResponse> GoogleLoginAsync(GoogleLoginRequest request);
     Task LogoutAsync(int userId);
 }
 
@@ -85,6 +87,57 @@ public class AuthService : IAuthService
                 LastName = user.LastName
             }
         };
+    }
+
+    public async Task<AuthResponse> GoogleLoginAsync(GoogleLoginRequest request)
+    {
+        try
+        {
+            var settings = new GoogleJsonWebSignature.ValidationSettings()
+            {
+                Audience = new[] { request.ClientId }
+            };
+
+            var payload = await GoogleJsonWebSignature.ValidateAsync(request.Credential, settings);
+            
+            var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == payload.Email);
+            
+            if (user == null)
+            {
+                // Create new user if doesn't exist
+                user = new User
+                {
+                    Email = payload.Email,
+                    FirstName = payload.GivenName,
+                    LastName = payload.FamilyName,
+                    CreatedAt = DateTime.UtcNow,
+                    LastLoginAt = DateTime.UtcNow
+                };
+                _context.Users.Add(user);
+                await _context.SaveChangesAsync();
+            }
+            else
+            {
+                user.LastLoginAt = DateTime.UtcNow;
+                await _context.SaveChangesAsync();
+            }
+
+            return new AuthResponse
+            {
+                Token = GenerateJwtToken(user),
+                User = new UserInfo
+                {
+                    Id = user.Id,
+                    Email = user.Email,
+                    FirstName = user.FirstName,
+                    LastName = user.LastName
+                }
+            };
+        }
+        catch (Exception ex)
+        {
+            throw new Exception("Invalid Google token: " + ex.Message);
+        }
     }
 
     public async Task LogoutAsync(int userId)

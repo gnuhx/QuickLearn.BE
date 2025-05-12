@@ -52,4 +52,18 @@ public class AuthController : ControllerBase
         await _authService.LogoutAsync(userId);
         return Ok();
     }
+
+    [HttpPost("google-login")]
+    public async Task<ActionResult<AuthResponse>> GoogleLogin(GoogleLoginRequest request)
+    {
+        try
+        {
+            var response = await _authService.GoogleLoginAsync(request);
+            return Ok(response);
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
 } 

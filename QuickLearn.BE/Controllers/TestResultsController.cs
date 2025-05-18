@@ -174,6 +174,253 @@ public class TestResultsController : ControllerBase
 
         return Ok(new { totalScore });
     }
+
+    [HttpPost("submit")]
+    public async Task<IActionResult> SubmitTest([FromBody] TestResultSubmission submission)
+    {
+        try
+        {
+            // Check if a Test with the given TestTag exists
+            var test = await _context.Tests.FirstOrDefaultAsync(t => t.TestTag == submission.TestId);
+            if (test == null)
+            {
+                // Check if a Subject with the given SubjectTag exists
+                var subject = await _context.Subjects.FirstOrDefaultAsync(s => s.Name == submission.SubjectTag);
+                if (subject == null)
+                {
+                    subject = new Subject
+                    {
+                        Name = submission.SubjectTag,
+                        CreatedDate = DateTime.UtcNow,
+                        ModifiedDate = DateTime.UtcNow
+                    };
+                    _context.Subjects.Add(subject);
+                    await _context.SaveChangesAsync();
+                }
+
+                // Check if a Grade with the given GradeTag exists
+                var grade = await _context.Grades.FirstOrDefaultAsync(g => g.Name == submission.GradeTag);
+                if (grade == null)
+                {
+                    grade = new Grade
+                    {
+                        Name = submission.GradeTag,
+                        CreatedDate = DateTime.UtcNow,
+                        ModifiedDate = DateTime.UtcNow
+                    };
+                    _context.Grades.Add(grade);
+                    await _context.SaveChangesAsync();
+                }
+
+                // Create a new Test
+                test = new Test
+                {
+                    Name = "Test " + submission.TestId,
+                    TestTag = submission.TestId,
+                    SubjectId = subject.Id,
+                    GradeId = grade.Id,
+                    CreatedAt = DateTime.UtcNow
+                };
+                _context.Tests.Add(test);
+                await _context.SaveChangesAsync();
+            }
+
+            // Create new test result
+            var testResult = new TestResult
+            {
+                TestId = test.Id,
+                UserId = submission.UserId,
+                StartedAt = submission.CompletedAt.AddMinutes(-30), // Assuming 30 minutes test duration
+                SubmittedAt = submission.CompletedAt,
+                TotalScore = submission.Score
+            };
+
+            // Add test result to get the ID
+            _context.TestResults.Add(testResult);
+            await _context.SaveChangesAsync();
+
+            // Create user answers
+            var userAnswers = new List<UserAnswer>();
+            foreach (var answer in submission.Answers)
+            {
+                // Check if a Question with the given QuestionTag exists
+                var question = await _context.Questions
+                    .FirstOrDefaultAsync(q => q.QuestionText == answer.QuestionTag && q.TestId == test.Id);
+
+                if (question == null)
+                {
+                    // Create a new Question if it doesn't exist
+                    question = new Question
+                    {
+                        TestId = test.Id,
+                        QuestionText = answer.QuestionTag,
+                        Type = answer.UserAnswer is System.Text.Json.JsonElement jsonElement && 
+                               jsonElement.ValueKind == System.Text.Json.JsonValueKind.Array 
+                            ? QuestionType.MultipleChoice 
+                            : QuestionType.SingleChoice
+                    };
+                    _context.Questions.Add(question);
+                    await _context.SaveChangesAsync();
+                }
+
+                var userAnswer = new UserAnswer
+                {
+                    TestResultId = testResult.Id,
+                    QuestionId = question.Id,
+                    IsCorrect = answer.IsCorrect
+                };
+
+                if (answer.UserAnswer is string singleAnswer)
+                {
+                    userAnswer.EssayText = singleAnswer;
+                }
+                else if (answer.UserAnswer is System.Text.Json.JsonElement jsonElement && jsonElement.ValueKind == System.Text.Json.JsonValueKind.Array)
+                {
+                    var selectedAnswers = jsonElement.EnumerateArray().Select(x => x.GetString()).ToList();
+                    
+                    // Create Answer entities for the selected answers if they don't exist
+                    var answers = new List<Answer>();
+                    foreach (var answerText in selectedAnswers)
+                    {
+                        var existingAnswer = await _context.Answers
+                            .FirstOrDefaultAsync(a => a.AnswerText == answerText && a.QuestionId == question.Id);
+
+                        if (existingAnswer == null)
+                        {
+                            existingAnswer = new Answer
+                            {
+                                QuestionId = question.Id,
+                                AnswerText = answerText,
+                                IsCorrect = false // Default to false, can be updated later if needed
+                            };
+                            _context.Answers.Add(existingAnswer);
+                            await _context.SaveChangesAsync();
+                        }
+                        answers.Add(existingAnswer);
+                    }
+                    userAnswer.SelectedAnswers = answers;
+                }
+
+                userAnswers.Add(userAnswer);
+            }
+
+            _context.UserAnswers.AddRange(userAnswers);
+            await _context.SaveChangesAsync();
+
+            return Ok(new { 
+                message = "Test result submitted successfully",
+                testResultId = testResult.Id
+            });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, $"Internal server error: {ex.Message}");
+        }
+    }
+
+    [HttpGet("by-test/{testId}")]
+    public async Task<ActionResult<TestResultSubmission>> GetTestResultByTestId(string testId)
+    {
+        try
+        {
+            var test = await _context.Tests
+                .Include(t => t.Subject)
+                .Include(t => t.Grade)
+                .FirstOrDefaultAsync(t => t.TestTag == testId);
+
+            if (test == null)
+            {
+                return NotFound($"Test with tag {testId} not found");
+            }
+
+            var testResult = await _context.TestResults
+                .Include(tr => tr.UserAnswers)
+                    .ThenInclude(ua => ua.Question)
+                .Include(tr => tr.UserAnswers)
+                    .ThenInclude(ua => ua.SelectedAnswers)
+                .FirstOrDefaultAsync(tr => tr.TestId == test.Id);
+
+            if (testResult == null)
+            {
+                return NotFound($"No test result found for test {testId}");
+            }
+
+            var submission = new TestResultSubmission
+            {
+                TestId = test.TestTag,
+                SubjectTag = test.Subject.Name,
+                GradeTag = test.Grade.Name,
+                UserId = testResult.UserId,
+                Score = testResult.TotalScore,
+                TotalQuestions = testResult.UserAnswers.Count,
+                Percentage = (testResult.TotalScore / testResult.UserAnswers.Count) * 100,
+                CompletedAt = testResult.SubmittedAt ?? testResult.StartedAt,
+                Answers = testResult.UserAnswers.Select(ua => new AnswerSubmission
+                {
+                    QuestionTag = ua.Question.QuestionText,
+                    IsCorrect = ua.IsCorrect,
+                    UserAnswer = ua.SelectedAnswers.Any() 
+                        ? ua.SelectedAnswers.Select(a => a.AnswerText).ToList()
+                        : ua.EssayText ?? string.Empty
+                }).ToList()
+            };
+
+            return Ok(submission);
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, $"Internal server error: {ex.Message}");
+        }
+    }
+
+    [HttpGet("by-result/{testResultId}")]
+    public async Task<ActionResult<TestResultSubmission>> GetTestResultById(int testResultId)
+    {
+        try
+        {
+            var testResult = await _context.TestResults
+                .Include(tr => tr.Test)
+                    .ThenInclude(t => t.Subject)
+                .Include(tr => tr.Test)
+                    .ThenInclude(t => t.Grade)
+                .Include(tr => tr.UserAnswers)
+                    .ThenInclude(ua => ua.Question)
+                .Include(tr => tr.UserAnswers)
+                    .ThenInclude(ua => ua.SelectedAnswers)
+                .FirstOrDefaultAsync(tr => tr.Id == testResultId);
+
+            if (testResult == null)
+            {
+                return NotFound($"Test result with ID {testResultId} not found");
+            }
+
+            var submission = new TestResultSubmission
+            {
+                TestId = testResult.Test.TestTag,
+                SubjectTag = testResult.Test.Subject.Name,
+                GradeTag = testResult.Test.Grade.Name,
+                UserId = testResult.UserId,
+                Score = testResult.TotalScore,
+                TotalQuestions = testResult.UserAnswers.Count,
+                Percentage = (testResult.TotalScore / testResult.UserAnswers.Count) * 100,
+                CompletedAt = testResult.SubmittedAt ?? testResult.StartedAt,
+                Answers = testResult.UserAnswers.Select(ua => new AnswerSubmission
+                {
+                    QuestionTag = ua.Question.QuestionText,
+                    IsCorrect = ua.IsCorrect,
+                    UserAnswer = ua.SelectedAnswers.Any() 
+                        ? ua.SelectedAnswers.Select(a => a.AnswerText).ToList()
+                        : ua.EssayText ?? string.Empty
+                }).ToList()
+            };
+
+            return Ok(submission);
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, $"Internal server error: {ex.Message}");
+        }
+    }
 }
 
 public class UserAnswerSubmission

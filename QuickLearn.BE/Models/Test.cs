@@ -6,6 +6,7 @@ public class Test
 {
     public int Id { get; set; }
     public string Name { get; set; } = string.Empty;
+    public string TestTag { get; set; } = string.Empty;
     public int SubjectId { get; set; }
     public Subject Subject { get; set; } = null!;
     public int GradeId { get; set; }

@@ -421,6 +421,170 @@ public class TestResultsController : ControllerBase
             return StatusCode(500, $"Internal server error: {ex.Message}");
         }
     }
+
+    public class TestResultSummary
+    {
+        public int TestResultId { get; set; }
+        public int TestId { get; set; }
+        public string TestName { get; set; }
+        public string SubjectName { get; set; }
+        public string GradeName { get; set; }
+        public decimal TotalScore { get; set; }
+        public int TotalQuestions { get; set; }
+        public DateTime StartedAt { get; set; }
+        public DateTime? SubmittedAt { get; set; }
+    }
+
+    public class PaginatedResponse<T>
+    {
+        public List<T> Items { get; set; }
+        public int TotalCount { get; set; }
+        public int PageNumber { get; set; }
+        public int PageSize { get; set; }
+        public int TotalPages { get; set; }
+        public bool HasPreviousPage { get; set; }
+        public bool HasNextPage { get; set; }
+    }
+
+    [HttpGet("by-user/{userId}/summary")]
+    public async Task<ActionResult<PaginatedResponse<TestResultSummary>>> GetTestResultsSummaryByUserId(
+        string userId,
+        [FromQuery] int pageNumber = 1,
+        [FromQuery] int pageSize = 25)
+    {
+        try
+        {
+            // Ensure page number is at least 1
+            pageNumber = Math.Max(1, pageNumber);
+            
+            // Get total count for pagination
+            var totalCount = await _context.TestResults
+                .Where(tr => tr.UserId == userId)
+                .CountAsync();
+
+            var testResults = await _context.TestResults
+                .Where(tr => tr.UserId == userId)
+                .Include(tr => tr.Test)
+                    .ThenInclude(t => t.Subject)
+                .Include(tr => tr.Test)
+                    .ThenInclude(t => t.Grade)
+                .Include(tr => tr.UserAnswers)
+                .OrderByDescending(tr => tr.SubmittedAt ?? tr.StartedAt)
+                .Skip((pageNumber - 1) * pageSize)
+                .Take(pageSize)
+                .Select(tr => new TestResultSummary
+                {
+                    TestResultId = tr.Id,
+                    TestId = tr.TestId,
+                    TestName = tr.Test.Name,
+                    SubjectName = tr.Test.Subject.Name,
+                    GradeName = tr.Test.Grade.Name,
+                    TotalScore = tr.TotalScore,
+                    TotalQuestions = tr.UserAnswers.Count,
+                    StartedAt = tr.StartedAt,
+                    SubmittedAt = tr.SubmittedAt
+                })
+                .ToListAsync();
+
+            if (!testResults.Any())
+            {
+                return NotFound($"No test results found for user {userId}");
+            }
+
+            var totalPages = (int)Math.Ceiling(totalCount / (double)pageSize);
+
+            var response = new PaginatedResponse<TestResultSummary>
+            {
+                Items = testResults,
+                TotalCount = totalCount,
+                PageNumber = pageNumber,
+                PageSize = pageSize,
+                TotalPages = totalPages,
+                HasPreviousPage = pageNumber > 1,
+                HasNextPage = pageNumber < totalPages
+            };
+
+            return Ok(response);
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, $"Internal server error: {ex.Message}");
+        }
+    }
+
+    public enum TimePeriod
+    {
+        Week,
+        Month,
+        ThreeMonths,
+        SixMonths,
+        TwelveMonths
+    }
+
+    public class TestResultChartData
+    {
+        public string Date { get; set; }
+        public decimal Score { get; set; }
+        public string TestName { get; set; }
+        public int TotalQuestions { get; set; }
+    }
+
+    [HttpGet("chart-data/{userId}")]
+    public async Task<ActionResult<IEnumerable<TestResultChartData>>> GetTestResultChartData(
+        string userId,
+        [FromQuery] string subjectNameTag,
+        [FromQuery] TimePeriod timePeriod = TimePeriod.TwelveMonths)
+    {
+        try
+        {
+            var startDate = DateTime.UtcNow;
+            switch (timePeriod)
+            {
+                case TimePeriod.Week:
+                    startDate = startDate.AddDays(-7);
+                    break;
+                case TimePeriod.Month:
+                    startDate = startDate.AddMonths(-1);
+                    break;
+                case TimePeriod.ThreeMonths:
+                    startDate = startDate.AddMonths(-3);
+                    break;
+                case TimePeriod.SixMonths:
+                    startDate = startDate.AddMonths(-6);
+                    break;
+                case TimePeriod.TwelveMonths:
+                    startDate = startDate.AddMonths(-12);
+                    break;
+            }
+
+            var testResults = await _context.TestResults
+                .Where(tr => tr.UserId == userId && 
+                            tr.SubmittedAt >= startDate &&
+                            tr.Test.Subject.Name == subjectNameTag)
+                .Include(tr => tr.Test)
+                .Include(tr => tr.UserAnswers)
+                .OrderBy(tr => tr.SubmittedAt)
+                .Select(tr => new TestResultChartData
+                {
+                    Date = tr.SubmittedAt!.Value.ToString("yyyy-MM-dd"),
+                    Score = tr.TotalScore,
+                    TestName = tr.Test.Name,
+                    TotalQuestions = tr.UserAnswers.Count
+                })
+                .ToListAsync();
+
+            if (!testResults.Any())
+            {
+                return NotFound($"No test results found for user {userId} in subject {subjectNameTag} for the selected time period");
+            }
+
+            return Ok(testResults);
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, $"Internal server error: {ex.Message}");
+        }
+    }
 }
 
 public class UserAnswerSubmission

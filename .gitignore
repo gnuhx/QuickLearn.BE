@@ -2,10 +2,34 @@
 # This .gitignore file was automatically created by Microsoft(R) Visual Studio.
 ################################################################################
 
+# Visual Studio / .NET specific
 /QuickLearn.BE/obj
 /QuickLearn.BE/bin/Debug/net9.0
-/QuickLearn.BE/.vs/QuickLearn.BE
-/QuickLearn.BE/.vs/ProjectEvaluation
 /QuickLearn.BE/bin/Release/net9.0
 /QuickLearn.BE/Properties/PublishProfiles
 /QuickLearn.BE/QuickLearn.BE.csproj.user
+.vs/
+**/.vs/
+
+# VS Code specific
+.vscode/
+*.code-workspace
+
+# GitHub Copilot specific
+.copilot/
+.copilot-chat/
+**/copilot-chat/
+**/.copilot/
+**/fileContentIndex/
+**/copilotIndices/
+
+# Environment specific
+.env
+.env.local
+*.pfx
+*.key
+*.pem
+
+# OS specific
+.DS_Store
+Thumbs.db

@@ -180,38 +180,39 @@ public class TestResultsController : ControllerBase
     {
         try
         {
-            // Check if a Test with the given TestTag exists
-            var test = await _context.Tests.FirstOrDefaultAsync(t => t.TestTag == submission.TestId);
+            // Check if a Subject with the given SubjectTag exists
+            var subject = await _context.Subjects.FirstOrDefaultAsync(s => s.Name == submission.SubjectTag);
+            if (subject == null)
+            {
+                subject = new Subject
+                {
+                    Name = submission.SubjectTag,
+                    // Add other required properties if needed
+                };
+                _context.Subjects.Add(subject);
+                await _context.SaveChangesAsync();
+            }
+
+            // Check if a Grade with the given GradeTag exists
+            var grade = await _context.Grades.FirstOrDefaultAsync(g => g.Name == submission.GradeTag);
+            if (grade == null)
+            {
+                grade = new Grade
+                {
+                    Name = submission.GradeTag,
+                    CreatedDate = DateTime.UtcNow,
+                    ModifiedDate = DateTime.UtcNow
+                };
+                _context.Grades.Add(grade);
+                await _context.SaveChangesAsync();
+            }
+
+            // Check if a Test with the given TestTag, SubjectId, and GradeId exists
+            var test = await _context.Tests.FirstOrDefaultAsync(
+                t => t.TestTag == submission.TestId && t.SubjectId == subject.Id && t.GradeId == grade.Id);
+
             if (test == null)
             {
-                // Check if a Subject with the given SubjectTag exists
-                var subject = await _context.Subjects.FirstOrDefaultAsync(s => s.Name == submission.SubjectTag);
-                if (subject == null)
-                {
-                    subject = new Subject
-                    {
-                        Name = submission.SubjectTag,
-                        CreatedDate = DateTime.UtcNow,
-                        ModifiedDate = DateTime.UtcNow
-                    };
-                    _context.Subjects.Add(subject);
-                    await _context.SaveChangesAsync();
-                }
-
-                // Check if a Grade with the given GradeTag exists
-                var grade = await _context.Grades.FirstOrDefaultAsync(g => g.Name == submission.GradeTag);
-                if (grade == null)
-                {
-                    grade = new Grade
-                    {
-                        Name = submission.GradeTag,
-                        CreatedDate = DateTime.UtcNow,
-                        ModifiedDate = DateTime.UtcNow
-                    };
-                    _context.Grades.Add(grade);
-                    await _context.SaveChangesAsync();
-                }
-
                 // Create a new Test
                 test = new Test
                 {
@@ -254,9 +255,9 @@ public class TestResultsController : ControllerBase
                     {
                         TestId = test.Id,
                         QuestionText = answer.QuestionTag,
-                        Type = answer.UserAnswer is System.Text.Json.JsonElement jsonElement && 
-                               jsonElement.ValueKind == System.Text.Json.JsonValueKind.Array 
-                            ? QuestionType.MultipleChoice 
+                        Type = answer.UserAnswer is System.Text.Json.JsonElement jsonElement &&
+                               jsonElement.ValueKind == System.Text.Json.JsonValueKind.Array
+                            ? QuestionType.MultipleChoice
                             : QuestionType.SingleChoice
                     };
                     _context.Questions.Add(question);
@@ -277,7 +278,7 @@ public class TestResultsController : ControllerBase
                 else if (answer.UserAnswer is System.Text.Json.JsonElement jsonElement && jsonElement.ValueKind == System.Text.Json.JsonValueKind.Array)
                 {
                     var selectedAnswers = jsonElement.EnumerateArray().Select(x => x.GetString()).ToList();
-                    
+
                     // Create Answer entities for the selected answers if they don't exist
                     var answers = new List<Answer>();
                     foreach (var answerText in selectedAnswers)
@@ -307,7 +308,8 @@ public class TestResultsController : ControllerBase
             _context.UserAnswers.AddRange(userAnswers);
             await _context.SaveChangesAsync();
 
-            return Ok(new { 
+            return Ok(new
+            {
                 message = "Test result submitted successfully",
                 testResultId = testResult.Id
             });
